@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    resque-delgation (0.0.1)
+    resque-delgation (0.0.0)
       resque (>= 1.8.0)
       resque-meta (>= 1.0.0)
 

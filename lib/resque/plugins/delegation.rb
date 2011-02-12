@@ -68,7 +68,9 @@ module Resque
         @meta = self.get_meta(meta_id)
         # puts "I have meta of: " + @meta.inspect
 
+        #implicitly builds the @step_list
         steps(*args)
+
         #TODO: raise error if there are duplicate steps defined?
 
         # require 'pp'

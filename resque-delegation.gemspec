@@ -19,6 +19,6 @@ Gem::Specification.new do |s|
 
   s.add_development_dependency 'rspec'
 
-  s.description       = <<description
-A Resque plugin that does stuff
+  s.description       = "A Resque plugin that does stuff"
+
 end

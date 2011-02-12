@@ -68,6 +68,9 @@ class Sandwhich < BaseJobWithPerform
     step "fetch a", :tomato do
       depend_on(Tomato, tomato_color)
     end
+    step "do something with no inputs" do
+      puts "did it"
+    end
     step "slice the ", :tomato, " and make", :tomato_slices do |tomato|
       tomato.split(",")
     end
