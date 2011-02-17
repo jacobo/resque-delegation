@@ -16,8 +16,10 @@ Gem::Specification.new do |s|
 
   s.add_dependency 'resque', '>= 1.8.0'
   s.add_dependency 'resque-meta', '>= 1.0.0'
+  s.add_dependency 'resque-lock', '>= 0.1.1'
 
   s.add_development_dependency 'rspec'
+  s.add_development_dependency 'ruby-debug'
 
   s.description       = "A Resque plugin that does stuff"
 

@@ -48,7 +48,7 @@ end
 class BaseJobWithPerform
   def self.perform(*args)
     begin
-      puts "Running #{self} with args #{args.inspect}"
+      puts "run #{self} #{args.inspect}"
       run_steps(*args)
     rescue => e
       puts e.inspect
@@ -164,13 +164,36 @@ describe "sandwhich" do
     WhatHappened.reset!
     Resque.redis.flushall
   end
-  
-  it "makes one" do
-    meta = Sandwhich.enqueue('red', true)
-    worker = Resque::Worker.new(:test)
-    worker.work(0)
-    # meta = Sandwhich.get_meta(meta.meta_id)
-    WhatHappened.what_happened.should == "(TCTCTCC|"
+
+  # it "makes one" do
+  #   meta = Sandwhich.enqueue('red', true)
+  #   worker = Resque::Worker.new(:test)
+  #   worker.work(0)
+  #   WhatHappened.what_happened.should == "(TCTCTCC|"
+  # end
+
+  describe "running 1 job at a time" do
+    before do
+      @worker = Resque::Worker.new(:test)
+      class << @worker
+        attr_accessor :assertion
+        def reserve
+          self.assertion.call
+          super
+        end
+      end
+    end
+
+    it "never enQs duplicates of the sandwich more than once" do
+      meta = Sandwhich.enqueue('red', true)
+      @worker.assertion = Proc.new do
+        the_q = Resque.peek(:test, 0, 100)
+        # the_q.should == the_q.uniq
+        pp the_q
+      end
+      @worker.work(0)
+      WhatHappened.what_happened.should == "(TCTCTCC|"
+    end
   end
 
   #should do a test where the job fails, 

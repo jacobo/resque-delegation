@@ -1,10 +1,12 @@
 require 'resque/plugins/meta'
+require 'resque/plugins/lock'
 
 module Resque
   module Plugins
     module Delegation
       def self.extended(mod)
         mod.extend(Resque::Plugins::Meta)
+        mod.extend(Resque::Plugins::Lock)
       end
 
       class Step
@@ -65,7 +67,7 @@ module Resque
 
       def run_steps(meta_id, *args)
         @step_list = []
-        @meta = self.get_meta(meta_id)
+        @meta = self.get_jobdata(meta_id)
         # puts "I have meta of: " + @meta.inspect
 
         #implicitly builds the @step_list
@@ -78,17 +80,17 @@ module Resque
 
         #figure out which step we are on from meta data
         steps_ran = @meta["steps_ran"] ||= []
-        puts "my steps_ran are #{steps_ran.inspect}"
+        # puts "my steps_ran are #{steps_ran.inspect}"
         # @step_list.map{ |step| step.signature }
         available_inputs = @meta["available_inputs"] ||= {}
-        puts "my available_inputs are #{available_inputs.inspect}"
+        # puts "my available_inputs are #{available_inputs.inspect}"
 
         #run last step if no more steps are needed
         @step_list.each do |step|
           if steps_ran.include?(step.signature)
             #already ran
           elsif step.run_last
-            puts "Can't run last step #{step.signature} yet"
+            # puts "Can't run last step #{step.signature} yet"
             #this is the last step, only run if all other steps are run
           elsif (step.inputs - available_inputs.keys).empty?
             #all of the steps needed inputs are available
@@ -96,6 +98,7 @@ module Resque
             result = step.run(available_inputs)
             if result.is_a?(StepDependency)
               #TODO: what if the child job is dQ'd before caller has a chance to set parent_job
+              puts "enqueue #{result.job_class}"
               child_job = result.job_class.enqueue(*result.job_args)
               child_job["parent_job"] = [self, meta_id, args]
               child_job["expected_output"] = step.output
@@ -105,23 +108,23 @@ module Resque
               if step.output
                 available_inputs[step.output] = result
               end
-              puts "available_inputs are now #{available_inputs.inspect}"
+              # puts "available_inputs are now #{available_inputs.inspect}"
               @meta["steps_ran"] << step.signature
             end
           else
-            puts "waiting before we can run step #{step.signature} -- need #{step.inputs}"
+            # puts "waiting before we can run step #{step.signature} -- need #{step.inputs}"
           end
         end
         
         if steps_ran.size + 1 == @step_list.size
-          puts "now running last step"
+          # puts "now running last step"
           step = @step_list.last
           result = step.run(available_inputs)
           if @meta["parent_job"]          
-            puts "#{meta_id} has parent"
+            # puts "#{meta_id} has parent"
             parent_job_class_name, parent_meta_id, parent_args = @meta["parent_job"]
             parent_job_class = const_get(parent_job_class_name)
-            parent_meta = parent_job_class.get_meta(parent_meta_id)
+            parent_meta = parent_job_class.get_jobdata(parent_meta_id)
             if expected_output = @meta["expected_output"]
               parent_meta["available_inputs"][expected_output] = result
               parent_meta.save
@@ -130,6 +133,7 @@ module Resque
               parent_meta["steps_ran"] << @meta["signature_from_parent"]
               parent_meta.save
             end
+            puts "enqueue #{parent_job_class}"
             Resque.enqueue(parent_job_class, parent_meta_id, *parent_args)
           end
           @meta["steps_ran"] << step.signature
@@ -140,13 +144,17 @@ module Resque
       def step(*args, &block)
         @step_list << Step.new(args, &block)
       end
-      
+
       def last_step(*args, &block)
         @step_list << Step.new(args, true, &block)
       end
-      
+
       def depend_on(job_class, *args)
         StepDependency.new(job_class, args)
+      end
+
+      def get_jobdata(meta_id)
+        get_meta(meta_id)
       end
 
     end
