@@ -1,5 +1,8 @@
 require 'resque/plugins/meta'
 require 'resque/plugins/lock'
+require 'resque-loner'
+require 'resque/plugins/delegation/other_plugin_exts/loner'
+require 'resque_scheduler'
 
 module Resque
   module Plugins
@@ -65,6 +68,13 @@ module Resque
         attr_reader :job_class, :job_args
       end
 
+      class Retry
+        def initialize(seconds)
+          @seconds = seconds
+        end
+        attr_reader :seconds
+      end
+
       def run_steps(meta_id, *args)
         @step_list = []
         @meta = self.get_jobdata(meta_id)
@@ -96,8 +106,12 @@ module Resque
             #all of the steps needed inputs are available
             #run!
             result = step.run(available_inputs)
-            if result.is_a?(StepDependency)
+            if result.is_a?(Retry)
+              Resque.enqueue_in(result.seconds, self, meta_id, *args)
+            elsif result.is_a?(StepDependency)
               #TODO: what if the child job is dQ'd before caller has a chance to set parent_job
+              # don't re-enQ a child that's already enQ'd!
+              # it might not be in steps ran but it doesn't need to be duplicated!
               puts "enqueue #{result.job_class}"
               child_job = result.job_class.enqueue(*result.job_args)
               child_job["parent_job"] = [self, meta_id, args]
@@ -109,6 +123,9 @@ module Resque
                 available_inputs[step.output] = result
               end
               # puts "available_inputs are now #{available_inputs.inspect}"
+              if @meta["steps_ran"].include?(step.signature)
+                raise "WHAT? ran #{step.signature} twice!"
+              end
               @meta["steps_ran"] << step.signature
             end
           else
@@ -117,7 +134,8 @@ module Resque
         end
         
         if steps_ran.size + 1 == @step_list.size
-          # puts "now running last step"
+          puts "now running last step of #{self} -- already ran #{steps_ran.inspect}"
+
           step = @step_list.last
           result = step.run(available_inputs)
           if @meta["parent_job"]          
@@ -130,11 +148,17 @@ module Resque
               parent_meta.save
             end
             if @meta["signature_from_parent"]
+              if parent_meta["steps_ran"].include?(@meta["signature_from_parent"])
+                raise "WHAT? ran #{@meta["signature_from_parent"]} twice!"
+              end
               parent_meta["steps_ran"] << @meta["signature_from_parent"]
               parent_meta.save
             end
             puts "enqueue #{parent_job_class}"
             Resque.enqueue(parent_job_class, parent_meta_id, *parent_args)
+          end
+          if @meta["steps_ran"].include?(step.signature)
+            raise "WHAT? ran #{step.signature} twice!"
           end
           @meta["steps_ran"] << step.signature
         end
@@ -151,6 +175,10 @@ module Resque
 
       def depend_on(job_class, *args)
         StepDependency.new(job_class, args)
+      end
+
+      def retry_in(seconds)
+        Retry.new(seconds)
       end
 
       def get_jobdata(meta_id)

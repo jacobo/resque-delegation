@@ -45,7 +45,12 @@ describe "the basics" do
   end
 end
 
-class BaseJobWithPerform
+class BaseJobWithPerform < Resque::Plugins::Loner::UniqueJob
+  extend Resque::Plugins::Delegation
+  def self.queue
+    :test
+  end
+
   def self.perform(*args)
     begin
       puts "run #{self} #{args.inspect}"
@@ -58,8 +63,8 @@ class BaseJobWithPerform
 end
 
 class Sandwhich < BaseJobWithPerform
-  extend Resque::Plugins::Delegation
-  @queue = :test
+  # extend Resque::Plugins::Delegation
+  # @queue = :test
 
   def self.steps(tomato_color, cheese_please)
     step "assemble the", :bread do
@@ -101,8 +106,8 @@ class Sandwhich < BaseJobWithPerform
 end
 
 class Bread < BaseJobWithPerform
-  extend Resque::Plugins::Delegation
-  @queue = :test
+  # extend Resque::Plugins::Delegation
+  # @queue = :test
 
   def self.steps
     step "fetch ", :flour do
@@ -123,8 +128,8 @@ class Bread < BaseJobWithPerform
 end
 
 class WheatGrinding < BaseJobWithPerform
-  extend Resque::Plugins::Delegation
-  @queue = :test
+  # extend Resque::Plugins::Delegation
+  # @queue = :test
 
   def self.steps
     last_step "return some flour" do
@@ -135,8 +140,8 @@ class WheatGrinding < BaseJobWithPerform
 end
 
 class Tomato < BaseJobWithPerform
-  extend Resque::Plugins::Delegation
-  @queue = :test
+  # extend Resque::Plugins::Delegation
+  # @queue = :test
 
   def self.steps(color)
     last_step "return tomato" do
@@ -146,10 +151,22 @@ class Tomato < BaseJobWithPerform
 end
 
 class Cheese < BaseJobWithPerform
-  extend Resque::Plugins::Delegation
-  @queue = :test
+  # extend Resque::Plugins::Delegation
+  # @queue = :test
+  class Milk
+    def self.curdled?
+      @checks_made ||= 0
+      @checks_made += 1
+      @checks_made > 2
+    end
+  end
 
   def self.steps
+    step "wait for the milk to curdle" do
+      unless Milk.curdled?
+        retry_in(1) #check again in 1 second
+      end
+    end
     last_step "return cheese" do
       #hmm, we can do things like pause here 
       #and wait for a decision about what kind of cheese
@@ -165,12 +182,12 @@ describe "sandwhich" do
     Resque.redis.flushall
   end
 
-  # it "makes one" do
-  #   meta = Sandwhich.enqueue('red', true)
-  #   worker = Resque::Worker.new(:test)
-  #   worker.work(0)
-  #   WhatHappened.what_happened.should == "(TCTCTCC|"
-  # end
+  it "makes one" do
+    meta = Sandwhich.enqueue('red', true)
+    worker = Resque::Worker.new(:test)
+    worker.work(0)
+    WhatHappened.what_happened.should == "(TCTCTCC|"
+  end
 
   describe "running 1 job at a time" do
     before do
@@ -188,8 +205,7 @@ describe "sandwhich" do
       meta = Sandwhich.enqueue('red', true)
       @worker.assertion = Proc.new do
         the_q = Resque.peek(:test, 0, 100)
-        # the_q.should == the_q.uniq
-        pp the_q
+        the_q.should == the_q.uniq
       end
       @worker.work(0)
       WhatHappened.what_happened.should == "(TCTCTCC|"

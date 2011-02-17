@@ -17,6 +17,8 @@ Gem::Specification.new do |s|
   s.add_dependency 'resque', '>= 1.8.0'
   s.add_dependency 'resque-meta', '>= 1.0.0'
   s.add_dependency 'resque-lock', '>= 0.1.1'
+  s.add_dependency 'resque-loner', '>= 0.1.3'
+  s.add_dependency 'resque-scheduler', '>= 1.9.8'
 
   s.add_development_dependency 'rspec'
   s.add_development_dependency 'ruby-debug'
