@@ -38,10 +38,16 @@ module Resque
         # attr_accessor :run_last
         # attr_reader :step_name, :what_it_makes, :block
         def run(available_inputs)
-          block_args = @inputs.map do |input_name|
-            available_inputs[input_name]
+          begin
+            block_args = @inputs.map do |input_name|
+              available_inputs[input_name]
+            end
+            @block.call(*block_args)
+          rescue Exception => e
+            puts e.inspect
+            puts e.backtrace.join("\n")
+            raise e
           end
-          @block.call(*block_args)
         end
       end
       
@@ -78,7 +84,7 @@ module Resque
       def run_steps(meta_id, *args)
         @step_list = []
         @meta = self.get_jobdata(meta_id)
-        # puts "I have meta of: " + @meta.inspect
+        puts "I have meta of: " + @meta.inspect
 
         #implicitly builds the @step_list
         steps(*args)
@@ -90,6 +96,7 @@ module Resque
 
         #figure out which step we are on from meta data
         steps_ran = @meta["steps_ran"] ||= []
+        steps_running = @meta["steps_running"] ||= []
         # puts "my steps_ran are #{steps_ran.inspect}"
         # @step_list.map{ |step| step.signature }
         available_inputs = @meta["available_inputs"] ||= {}
@@ -99,6 +106,8 @@ module Resque
         @step_list.each do |step|
           if steps_ran.include?(step.signature)
             #already ran
+          elsif steps_running.include?(step.signature)
+            #already Q'd
           elsif step.run_last
             # puts "Can't run last step #{step.signature} yet"
             #this is the last step, only run if all other steps are run
@@ -106,7 +115,9 @@ module Resque
             #all of the steps needed inputs are available
             #run!
             result = step.run(available_inputs)
+            puts "running step #{step.signature}"
             if result.is_a?(Retry)
+              puts "enqueue #{self} in #{result.seconds}"
               Resque.enqueue_in(result.seconds, self, meta_id, *args)
             elsif result.is_a?(StepDependency)
               #TODO: what if the child job is dQ'd before caller has a chance to set parent_job
@@ -114,6 +125,7 @@ module Resque
               # it might not be in steps ran but it doesn't need to be duplicated!
               puts "enqueue #{result.job_class}"
               child_job = result.job_class.enqueue(*result.job_args)
+              @meta["steps_running"] << step.signature
               child_job["parent_job"] = [self, meta_id, args]
               child_job["expected_output"] = step.output
               child_job["signature_from_parent"] = step.signature
@@ -137,7 +149,9 @@ module Resque
           puts "now running last step of #{self} -- already ran #{steps_ran.inspect}"
 
           step = @step_list.last
+          puts "wtf!"
           result = step.run(available_inputs)
+          puts "last step result #{result.inspect}"
           if @meta["parent_job"]          
             # puts "#{meta_id} has parent"
             parent_job_class_name, parent_meta_id, parent_args = @meta["parent_job"]
@@ -163,6 +177,8 @@ module Resque
           @meta["steps_ran"] << step.signature
         end
         @meta.save
+
+        puts "End of #{self}"
       end
 
       def step(*args, &block)

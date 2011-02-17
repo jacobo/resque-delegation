@@ -10,6 +10,7 @@ class WhatHappened
     File.read(@what_happened.path)
   end
   def self.record(*event)
+    puts "EVENT! #{event}"
     @what_happened.write(event.to_s)
     @what_happened.flush
   end
@@ -66,7 +67,7 @@ class Sandwhich < BaseJobWithPerform
   # extend Resque::Plugins::Delegation
   # @queue = :test
 
-  def self.steps(tomato_color, cheese_please)
+  def self.steps(tomato_color, cheese_please, cheesemaker)
     step "assemble the", :bread do
       depend_on(Bread)
     end
@@ -81,7 +82,7 @@ class Sandwhich < BaseJobWithPerform
     end
     step "fetch the", :cheese_slices do
       if cheese_please
-        depend_on(Cheese)
+        depend_on(Cheese, cheesemaker)
       else
         []
       end
@@ -99,7 +100,8 @@ class Sandwhich < BaseJobWithPerform
         sandwhich += cheese_slice        
       end
       sandwhich += bread[1]
-      WhatHappened.record(sandwhich)      
+      puts "Sandwhich complete!"
+      WhatHappened.record(sandwhich)
     end
   end
 
@@ -154,16 +156,21 @@ class Cheese < BaseJobWithPerform
   # extend Resque::Plugins::Delegation
   # @queue = :test
   class Milk
-    def self.curdled?
-      @checks_made ||= 0
-      @checks_made += 1
-      @checks_made > 2
+    def self.curdled?(cheesemaker)
+      begin
+        Process.getpgid(cheesemaker)
+        false
+      rescue
+        true
+      end
     end
   end
 
-  def self.steps
+  def self.steps(cheesemaker)
     step "wait for the milk to curdle" do
-      unless Milk.curdled?
+      if Milk.curdled?(cheesemaker)
+        puts "Cheese is ready!"
+      else
         retry_in(1) #check again in 1 second
       end
     end
@@ -180,37 +187,124 @@ describe "sandwhich" do
   before do
     WhatHappened.reset!
     Resque.redis.flushall
+    @cheesemaker = Process.fork do
+      sleep 3
+    end
+  end
+
+  def work_until_finished
+    scheduler = Process.fork do
+      begin
+        Resque::Scheduler.run
+      rescue => e
+        puts e.inspect
+        puts e.backtrace.join("\n")
+      end
+    end
+    worker = Process.fork do
+      begin
+        Resque::Worker.new(:test).work(1)
+      rescue => e
+        puts e.inspect
+        puts e.backtrace.join("\n")
+      end
+    end
+
+    times_empty = 0
+    #if the Q is empty 2 seconds in a row, exit the procs and return
+    while true
+      begin
+        current_q = Resque.peek(:test, 0, 100)
+        pp current_q
+        if current_q.empty?
+          times_empty += 1
+        else
+          times_empty = 0
+        end
+        if times_empty > 5
+          Process.kill("HUP", scheduler)
+          Process.kill("HUP", worker)
+          return
+        else
+          sleep 1
+        end
+      rescue => e
+        puts e.inspect
+      end
+    end
+
+
+
+    # Resque::Scheduler.load_schedule!
+    #
+    # @worker.work(0)
+    # while(Resque.delayed_queue_schedule_size > 0)
+    #   Resque::Scheduler.handle_delayed_items
+    #   sleep 1
+    #   pp Resque.peek(:test, 0, 100)
+    #   @worker.work(0)
+    #   sleep 1
+    #   pp Resque.peek(:test, 0, 100)
+    # end
+    #
+    # puts "DONE"
+    #
+    # debugger
+    # 1
+
+    # sleep 2
+
+    # work = Proc.new do
+    #   # pp Resque.peek(:test, 0, 100)
+    #   @worker.work(0)
+    #   # pp Resque.peek(:test, 0, 100)
+    #   q_size = Resque.delayed_queue_schedule_size || 0
+    #   # puts q_size.inspect
+    #   if(q_size > 0)
+    #     Resque::Scheduler.handle_delayed_items
+    #     work.call
+    #   end
+    # end
+    # work.call
+    # sleep 1
+    # debugger
+    # 1
+
+    # SystemTimer.timeout(10) do
+    #   until @hit_the_instance
+    #     sleep(0.5)
+    #   end
+    # end
   end
 
   it "makes one" do
-    meta = Sandwhich.enqueue('red', true)
-    worker = Resque::Worker.new(:test)
-    worker.work(0)
+    meta = Sandwhich.enqueue('red', true, @cheesemaker)
+    work_until_finished
     WhatHappened.what_happened.should == "(TCTCTCC|"
   end
 
-  describe "running 1 job at a time" do
-    before do
-      @worker = Resque::Worker.new(:test)
-      class << @worker
-        attr_accessor :assertion
-        def reserve
-          self.assertion.call
-          super
-        end
-      end
-    end
-
-    it "never enQs duplicates of the sandwich more than once" do
-      meta = Sandwhich.enqueue('red', true)
-      @worker.assertion = Proc.new do
-        the_q = Resque.peek(:test, 0, 100)
-        the_q.should == the_q.uniq
-      end
-      @worker.work(0)
-      WhatHappened.what_happened.should == "(TCTCTCC|"
-    end
-  end
+  # describe "running 1 job at a time" do
+  #   before do
+  #     @worker = Resque::Worker.new(:test)
+  #     class << @worker
+  #       attr_accessor :assertion
+  #       def reserve
+  #         self.assertion.call
+  #         super
+  #       end
+  #     end
+  #   end
+  #
+  #   it "never enQs duplicates of the sandwich more than once" do
+  #     meta = Sandwhich.enqueue('red', true, @cheesemaker)
+  #     @worker.assertion = Proc.new do
+  #       the_q = Resque.peek(:test, 0, 100)
+  #       the_q.should == the_q.uniq
+  #     end
+  #     work_until_finished
+  #     WhatHappened.what_happened.should == "(TCTCTCC|"
+  #   end
+  # end
 
   #should do a test where the job fails, 
   #but because the meta data is available
