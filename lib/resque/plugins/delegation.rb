@@ -1,4 +1,5 @@
 require 'resque/plugins/meta'
+require 'resque/plugins/delegation/other_plugin_exts/meta'
 require 'resque/plugins/lock'
 require 'resque-loner'
 require 'resque/plugins/delegation/other_plugin_exts/loner'
@@ -84,7 +85,7 @@ module Resque
       def run_steps(meta_id, *args)
         @step_list = []
         @meta = self.get_jobdata(meta_id)
-        puts "I have meta of: " + @meta.inspect
+        # puts "I have meta of: " + @meta.inspect
 
         #implicitly builds the @step_list
         steps(*args)
@@ -95,6 +96,7 @@ module Resque
         # pp @step_list
 
         #figure out which step we are on from meta data
+        @meta["step_count"] ||= @step_list.size
         steps_ran = @meta["steps_ran"] ||= []
         steps_running = @meta["steps_running"] ||= []
         # puts "my steps_ran are #{steps_ran.inspect}"

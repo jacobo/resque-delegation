@@ -227,7 +227,30 @@ describe "sandwhich" do
     # times_empty = 0
     #if the Q is empty 5 seconds in a row, exit the procs and return
 
-    sleep 15
+    # 30.times do
+    #   pp Resque.peek(:test, 0, 100)
+    #   sleep 0.5
+    # end
+
+    any_running = true
+    while(any_running)
+      any_running = false
+      Resque.redis.keys("meta*").each do |key|
+        meta = Resque::Plugins::Meta.get_meta(key.split(":").last)
+        if meta.finished?
+          # puts "finished #{meta['job_class']}"
+        else
+          any_running = true
+          # puts "still running #{meta['job_class']}"
+        end
+      end
+      sleep(0.5)
+    end
+
+    # sleep 15
+
+    # debugger
+    # 1
 
     #
     schedulers.each do |scheduler|
@@ -310,7 +333,7 @@ describe "sandwhich" do
     # end
   end
 
-  1.times do |i|
+  10.times do |i|
 
     it "makes one on try #{i}" do
       meta = Sandwhich.enqueue('red', true, @cheesemaker)
