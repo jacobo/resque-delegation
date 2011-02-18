@@ -149,9 +149,7 @@ module Resque
           puts "now running last step of #{self} -- already ran #{steps_ran.inspect}"
 
           step = @step_list.last
-          puts "wtf!"
           result = step.run(available_inputs)
-          puts "last step result #{result.inspect}"
           if @meta["parent_job"]          
             # puts "#{meta_id} has parent"
             parent_job_class_name, parent_meta_id, parent_args = @meta["parent_job"]

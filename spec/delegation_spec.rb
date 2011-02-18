@@ -10,7 +10,6 @@ class WhatHappened
     File.read(@what_happened.path)
   end
   def self.record(*event)
-    puts "EVENT! #{event}"
     @what_happened.write(event.to_s)
     @what_happened.flush
   end
@@ -171,6 +170,7 @@ class Cheese < BaseJobWithPerform
       if Milk.curdled?(cheesemaker)
         puts "Cheese is ready!"
       else
+        puts "Cheese not ready yet"
         retry_in(1) #check again in 1 second
       end
     end
@@ -188,50 +188,83 @@ describe "sandwhich" do
     WhatHappened.reset!
     Resque.redis.flushall
     @cheesemaker = Process.fork do
-      sleep 3
+      sleep 10
     end
   end
 
   def work_until_finished
-    scheduler = Process.fork do
-      begin
-        Resque::Scheduler.run
-      rescue => e
-        puts e.inspect
-        puts e.backtrace.join("\n")
+    schedulers = []
+    5.times do
+      schedulers << Process.fork do
+        begin
+          Resque.redis.client.reconnect
+          Resque::Scheduler.run
+        rescue => e
+          puts e.inspect
+          puts e.backtrace.join("\n")
+        end
       end
     end
-    worker = Process.fork do
-      begin
-        Resque::Worker.new(:test).work(1)
-      rescue => e
-        puts e.inspect
-        puts e.backtrace.join("\n")
+    workers = []
+    5.times do
+      workers << Process.fork do
+        begin
+          Resque.redis.client.reconnect
+          Resque::Worker.new(:test).work(1)
+        rescue => e
+          puts e.inspect
+          puts e.backtrace.join("\n")
+        end
       end
     end
 
-    times_empty = 0
-    #if the Q is empty 2 seconds in a row, exit the procs and return
-    while true
-      begin
-        current_q = Resque.peek(:test, 0, 100)
-        pp current_q
-        if current_q.empty?
-          times_empty += 1
-        else
-          times_empty = 0
-        end
-        if times_empty > 5
-          Process.kill("HUP", scheduler)
-          Process.kill("HUP", worker)
-          return
-        else
-          sleep 1
-        end
-      rescue => e
-        puts e.inspect
-      end
+    # debugger
+    # 1
+
+    #TODO: sleep 1, then just scan the meta job info in resque for jobs that havn't completed yet
+    #exit when they have
+
+    # times_empty = 0
+    #if the Q is empty 5 seconds in a row, exit the procs and return
+
+    sleep 15
+
+    #
+    schedulers.each do |scheduler|
+      Process.kill("HUP", scheduler)
     end
+    workers.each do |worker|
+      Process.kill("HUP", worker)
+    end
+    #
+    # sleep 1
+
+    # while true
+    #   begin
+    #     current_q = Resque.peek(:test, 0, 100)
+    #     pp current_q
+    #     puts times_empty
+    #     if current_q.empty?
+    #       times_empty += 1
+    #     else
+    #       times_empty = 0
+    #     end
+    #     if times_empty > 5
+    #       schedulers.each do |scheduler|
+    #         Process.kill("HUP", scheduler)
+    #       end
+    #       workers.each do |worker|
+    #         Process.kill("HUP", worker)
+    #       end
+    #       sleep 1
+    #       return
+    #     else
+    #       sleep 1
+    #     end
+    #   rescue => e
+    #     puts e.inspect
+    #   end
+    # end
 
 
 
@@ -277,10 +310,14 @@ describe "sandwhich" do
     # end
   end
 
-  it "makes one" do
-    meta = Sandwhich.enqueue('red', true, @cheesemaker)
-    work_until_finished
-    WhatHappened.what_happened.should == "(TCTCTCC|"
+  1.times do |i|
+
+    it "makes one on try #{i}" do
+      meta = Sandwhich.enqueue('red', true, @cheesemaker)
+      work_until_finished
+      WhatHappened.what_happened.should == "(TCTCTCC|"
+    end
+
   end
 
   # describe "running 1 job at a time" do
